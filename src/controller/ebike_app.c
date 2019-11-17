@@ -168,12 +168,83 @@ static void     apply_boost_fade_out (uint8_t *ui8_target_current);
 
 static void safe_tests (void);
 
+#if DISPLAY_VLCD5_ENABLED || DISPLAY_VLCD6_ENABLED
+uint8_t ui8_assist_levels_factor_x10[5] =
+{
+  DEFAULT_ASSIST_LEVEL_FACTOR_X10_0,
+  DEFAULT_ASSIST_LEVEL_FACTOR_X10_1,
+  DEFAULT_ASSIST_LEVEL_FACTOR_X10_2,
+  DEFAULT_ASSIST_LEVEL_FACTOR_X10_3,
+  DEFAULT_ASSIST_LEVEL_FACTOR_X10_4,
+};
+uint8_t ui8_startup_motor_power_boost_assist_levels[5] =
+{
+  DEFAULT_STARTUP_MOTOR_POWER_BOOST_ASSIST_LEVEL_X10_0,
+  DEFAULT_STARTUP_MOTOR_POWER_BOOST_ASSIST_LEVEL_X10_1,
+  DEFAULT_STARTUP_MOTOR_POWER_BOOST_ASSIST_LEVEL_X10_2,
+  DEFAULT_STARTUP_MOTOR_POWER_BOOST_ASSIST_LEVEL_X10_3,
+  DEFAULT_STARTUP_MOTOR_POWER_BOOST_ASSIST_LEVEL_X10_4,
+};
+uint8_t ui8_walk_assist_levels_factor[5] =
+{
+  DEFAULT_WALK_ASSIST_LEVEL_FACTOR_0,
+  DEFAULT_WALK_ASSIST_LEVEL_FACTOR_1,
+  DEFAULT_WALK_ASSIST_LEVEL_FACTOR_2,
+  DEFAULT_WALK_ASSIST_LEVEL_FACTOR_3,
+  DEFAULT_WALK_ASSIST_LEVEL_FACTOR_4,
+};
+#if DISPLAY_VLCD5_ENABLED
+uint8_t ui8_battery_state_of_charge_levels[10] =
+{
+  DISPLAY_VLCD5_BATTERY_LEVEL_0,
+  DISPLAY_VLCD5_BATTERY_LEVEL_0,
+  DISPLAY_VLCD5_BATTERY_LEVEL_1,
+  DISPLAY_VLCD5_BATTERY_LEVEL_2,
+  DISPLAY_VLCD5_BATTERY_LEVEL_3,
+  DISPLAY_VLCD5_BATTERY_LEVEL_4,
+  DISPLAY_VLCD5_BATTERY_LEVEL_5,
+  DISPLAY_VLCD5_BATTERY_LEVEL_6,
+  DISPLAY_VLCD5_BATTERY_LEVEL_6,
+  DISPLAY_VLCD5_BATTERY_LEVEL_6,
+};
+#else
+uint8_t ui8_battery_state_of_charge_levels[10] =
+{
+  DISPLAY_VLCD6_BATTERY_LEVEL_0,
+  DISPLAY_VLCD6_BATTERY_LEVEL_0,
+  DISPLAY_VLCD6_BATTERY_LEVEL_1,
+  DISPLAY_VLCD6_BATTERY_LEVEL_2,
+  DISPLAY_VLCD6_BATTERY_LEVEL_3,
+  DISPLAY_VLCD6_BATTERY_LEVEL_4,
+  DISPLAY_VLCD6_BATTERY_LEVEL_4,
+  DISPLAY_VLCD6_BATTERY_LEVEL_4,
+  DISPLAY_VLCD6_BATTERY_LEVEL_4,
+  DISPLAY_VLCD6_BATTERY_LEVEL_4,
+};
+#endif
+
+volatile uint8_t ui8_assist_level = DEFAULT_ASSIST_LEVEL;
+volatile uint32_t ui32_battery_voltage_accumulated_x10000 = 0;
+volatile uint16_t ui16_battery_current_accumulated_x5 = 0;
+volatile uint8_t ui8_battery_state_of_charge = 0;
+volatile uint8_t ui8_startup_counter = 0;
+volatile uint8_t ui8_fault_code = DISPLAY_VLCD_FAULT_CODE_NO_FAULT;
+volatile uint8_t ui8_lights_flag = 0;
+volatile uint8_t ui8_data_page = 0;
+volatile uint8_t ui8_data_index = 0;
+
+static void init_default_config(void);
+static void calc_battery_soc(void);
+#endif
 
 void ebike_app_init (void)
 {
   // init variables with the stored value on EEPROM
   eeprom_init_variables ();
   ebike_app_set_battery_max_current (ADC_BATTERY_CURRENT_MAX);
+#if DISPLAY_VLCD5_ENABLED || DISPLAY_VLCD6_ENABLED
+  init_default_config();
+#endif
 }
 
 
@@ -395,6 +466,433 @@ static void ebike_control_motor (void)
   }
 }
 
+#if DISPLAY_VLCD5_ENABLED || DISPLAY_VLCD6_ENABLED
+static void init_default_config(void)
+{
+  uint32_t ui32_temp;
+
+  // assist level
+  configuration_variables.ui8_assist_level_factor_x10 = ui8_assist_levels_factor_x10[ui8_assist_level];
+
+  // lights state
+  configuration_variables.ui8_lights = DEFAULT_LIGHTS_STATE;
+
+  // set lights
+  lights_set_state(configuration_variables.ui8_lights);
+
+  // walk assist / cruise function 
+  configuration_variables.ui8_walk_assist = 0;
+
+  // battery max current
+  configuration_variables.ui8_battery_max_current = DEFAULT_BATTERY_MAX_CURRENT;
+
+  // set max current from battery
+  ebike_app_set_battery_max_current(configuration_variables.ui8_battery_max_current);
+
+  // target battery max power
+  configuration_variables.ui8_target_battery_max_power_div25 = (uint8_t) ((uint16_t) DEFAULT_TARGET_BATTERY_MAX_POWER / 25);
+
+  // battery low voltage cut-off
+  configuration_variables.ui16_battery_low_voltage_cut_off_x10 = DEFAULT_BATTERY_LOW_VOLTAGE_CUT_OFF_X10;
+
+  // calc the value in ADC steps and set it up
+  ui32_temp = ((uint32_t) configuration_variables.ui16_battery_low_voltage_cut_off_x10 << 8) / ((uint32_t) ADC8BITS_BATTERY_VOLTAGE_PER_ADC_STEP_INVERSE_X256);
+  ui32_temp /= 10;
+  motor_set_adc_battery_voltage_cut_off((uint8_t) ui32_temp);
+
+  // wheel perimeter
+  configuration_variables.ui16_wheel_perimeter = DEFAULT_WHEEL_PERIMETER;
+
+  // wheel max speed
+  configuration_variables.ui8_wheel_max_speed = DEFAULT_WHEEL_MAX_SPEED;
+
+  // type of motor (36 volt, 48 volt or some experimental type)
+  configuration_variables.ui8_motor_type = DEFAULT_MOTOR_TYPE;
+
+  // motor assistance without pedal rotation enable/disable when startup 
+  configuration_variables.ui8_motor_assistance_startup_without_pedal_rotation = DEFAULT_MOTOR_ASSISTANCE_STARTUP_WITHOUT_PEDAL_ROTATION;
+
+  // motor temperature limit function enable/disable
+  configuration_variables.ui8_temperature_limit_feature_enabled = DEFAULT_TEMPERATURE_LIMIT_FEATURE_ENABLED;
+
+  // startup motor boost state
+  configuration_variables.ui8_startup_motor_power_boost_state = DEFAULT_STARTUP_MOTOR_POWER_BOOST_STATE;
+
+  // startup power boost max power limit
+  configuration_variables.ui8_startup_motor_power_boost_limit_to_max_power = DEFAULT_STARTUP_MOTOR_POWER_BOOST_LIMIT_TO_MAX_POWER;
+
+  // startup motor power boost
+  configuration_variables.ui8_startup_motor_power_boost_assist_level = ui8_startup_motor_power_boost_assist_levels[ui8_assist_level];
+
+  // startup motor power boost time
+  configuration_variables.ui8_startup_motor_power_boost_time = DEFAULT_STARTUP_MOTOR_POWER_BOOST_TIME_X10;
+
+  // startup motor power boost fade time
+  configuration_variables.ui8_startup_motor_power_boost_fade_time = DEFAULT_STARTUP_MOTOR_POWER_BOOST_FADE_TIME_X10;
+  configuration_variables.ui8_startup_motor_power_boost_feature_enabled = DEFAULT_STARTUP_MOTOR_POWER_BOOST_FEATURE_ENABLED;
+
+  // motor temperature min and max values to limit
+  configuration_variables.ui8_motor_temperature_min_value_to_limit = DEFAULT_MOTOR_TEMPERATURE_MIN_VALUE_TO_LIMIT;
+  configuration_variables.ui8_motor_temperature_max_value_to_limit = DEFAULT_MOTOR_TEMPERATURE_MAX_VALUE_TO_LIMIT;
+
+  // offroad mode configuration
+  configuration_variables.ui8_offroad_feature_enabled = DEFAULT_OFFROAD_FEATURE_ENABLED;
+  configuration_variables.ui8_offroad_enabled_on_startup = DEFAULT_OFFROAD_ENABLED_ON_STARTUP;
+
+  // offroad mode
+  configuration_variables.ui8_offroad_mode = configuration_variables.ui8_offroad_feature_enabled && configuration_variables.ui8_offroad_enabled_on_startup;
+
+  // offroad mode speed limit
+  configuration_variables.ui8_offroad_speed_limit = DEFAULT_OFFROAD_SPEED_LIMIT;
+
+  // offroad mode power limit configuration
+  configuration_variables.ui8_offroad_power_limit_enabled = DEFAULT_OFFROAD_POWER_LIMIT_ENABLED;
+  configuration_variables.ui8_offroad_power_limit_div25 = (uint8_t) ((uint16_t) DEFAULT_OFFROAD_POWER_LIMIT / 25);
+
+  // ramp up, amps per second
+  configuration_variables.ui8_ramp_up_amps_per_second_x10 = DEFAULT_RAMP_UP_AMPS_PER_SECOND_X10;
+
+  // check that value seems correct
+  if (configuration_variables.ui8_ramp_up_amps_per_second_x10 < 4 || configuration_variables.ui8_ramp_up_amps_per_second_x10 > 100)
+  {
+    // value is not valid, set to default
+    configuration_variables.ui8_ramp_up_amps_per_second_x10 = 50;
+  }
+
+  // calculate current step for ramp up
+  ui32_temp = ((uint32_t) 97656) / ((uint32_t) configuration_variables.ui8_ramp_up_amps_per_second_x10); // see note below
+  ui16_current_ramp_up_inverse_step = (uint16_t) ui32_temp;
+
+  /*---------------------------------------------------------
+  NOTE: regarding ramp up
+
+  Example of calculation:
+
+  Target ramp up: 5 amps per second
+
+  Every second has 15625 PWM cycles interrupts,
+  one ADC battery current step --> 0.625 amps:
+
+  5 / 0.625 = 8 (we need to do 8 steps ramp up per second)
+
+  Therefore:
+
+  15625 / 8 = 1953 (our default value)
+  ---------------------------------------------------------*/
+
+  // received target speed for cruise
+  ui16_received_target_wheel_speed_x10 = DEFAULT_CRUISE_FUNCTION_SET_TARGET_SPEED_ENABLED ? ((uint16_t) DEFAULT_CRUISE_TARGET_WHEEL_SPEED * 10) : 0;
+
+  // verify if any configuration_variables did change and if so, save all of them in the EEPROM
+  eeprom_write_if_values_changed();
+}
+
+static void calc_battery_soc(void)
+{
+  uint16_t ui16_adc_battery_voltage;
+  uint8_t ui8_battery_current_x5;
+  uint16_t ui16_battery_voltage_filtered_x10;
+  uint16_t ui16_battery_current_filtered_x5;
+  uint16_t ui16_fluctuate_battery_voltage_x10;
+  uint16_t ui16_battery_voltage_soc_x100;
+
+  // adc 10 bits battery voltage
+  ui16_adc_battery_voltage = motor_get_adc_battery_voltage_filtered_10b();
+
+  // battery current x5
+  ui8_battery_current_x5 = (uint8_t) ((float) motor_get_adc_battery_current_filtered_10b() * 0.826);
+
+  // low pass filter battery voltage
+  ui32_battery_voltage_accumulated_x10000 -= ui32_battery_voltage_accumulated_x10000 >> DEFAULT_BATTERY_VOLTAGE_FILTER_COEFFICIENT;
+  ui32_battery_voltage_accumulated_x10000 += (uint32_t) ui16_adc_battery_voltage * ADC_BATTERY_VOLTAGE_PER_ADC_STEP_X10000;
+  ui16_battery_voltage_filtered_x10 = ((uint32_t) (ui32_battery_voltage_accumulated_x10000 >> DEFAULT_BATTERY_VOLTAGE_FILTER_COEFFICIENT)) / 1000;
+
+  // low pass filter battery current
+  ui16_battery_current_accumulated_x5 -= ui16_battery_current_accumulated_x5 >> DEFAULT_BATTERY_CURRENT_FILTER_COEFFICIENT;
+  ui16_battery_current_accumulated_x5 += (uint16_t) ui8_battery_current_x5;
+  ui16_battery_current_filtered_x5 = ui16_battery_current_accumulated_x5 >> DEFAULT_BATTERY_CURRENT_FILTER_COEFFICIENT;
+
+  // calculate flutuate voltage, that depends on the current and battery pack resistance
+  ui16_fluctuate_battery_voltage_x10 = (uint16_t) ((((uint32_t) DEFAULT_BATTERY_PACK_RESISTANCE) * ((uint32_t) ui16_battery_current_filtered_x5)) / ((uint32_t) 500));
+  // now add fluctuate voltage value
+  ui16_battery_voltage_soc_x100 = ui16_battery_voltage_filtered_x10 + ui16_fluctuate_battery_voltage_x10;
+
+  // to keep same scale as cell voltage of x100
+  ui16_battery_voltage_soc_x100 *= 10;
+
+  if      (ui16_battery_voltage_soc_x100 >= (DEFAULT_BATTERY_CELLS_NUMBER * DISPLAY_VLCD_LI_ION_CELL_VOLTS_X100_OVERVOLTAGE))   { ui8_battery_state_of_charge = 9; }   // overvoltage
+  else if (ui16_battery_voltage_soc_x100 <= (DEFAULT_BATTERY_CELLS_NUMBER * DISPLAY_VLCD_LI_ION_CELL_VOLTS_X100_UNDERVOLTAGE))  { ui8_battery_state_of_charge = 0; }   // undervoltage
+  else
+  {
+  #if DISPLAY_VLCD5_ENABLED
+    if      (ui16_battery_voltage_soc_x100 > (DEFAULT_BATTERY_CELLS_NUMBER * DISPLAY_VLCD5_LI_ION_CELL_VOLTS_X100_6)) { ui8_battery_state_of_charge = 7; }      // 6 bars | full
+    else if (ui16_battery_voltage_soc_x100 > (DEFAULT_BATTERY_CELLS_NUMBER * DISPLAY_VLCD5_LI_ION_CELL_VOLTS_X100_5)) { ui8_battery_state_of_charge = 6; }      // 5 bars
+    else if (ui16_battery_voltage_soc_x100 > (DEFAULT_BATTERY_CELLS_NUMBER * DISPLAY_VLCD5_LI_ION_CELL_VOLTS_X100_4)) { ui8_battery_state_of_charge = 5; }      // 4 bars
+    else if (ui16_battery_voltage_soc_x100 > (DEFAULT_BATTERY_CELLS_NUMBER * DISPLAY_VLCD5_LI_ION_CELL_VOLTS_X100_3)) { ui8_battery_state_of_charge = 4; }      // 3 bars
+    else if (ui16_battery_voltage_soc_x100 > (DEFAULT_BATTERY_CELLS_NUMBER * DISPLAY_VLCD5_LI_ION_CELL_VOLTS_X100_2)) { ui8_battery_state_of_charge = 3; }      // 2 bars
+    else if (ui16_battery_voltage_soc_x100 > (DEFAULT_BATTERY_CELLS_NUMBER * DISPLAY_VLCD5_LI_ION_CELL_VOLTS_X100_1)) { ui8_battery_state_of_charge = 2; }      // 1 bar
+    else if (ui16_battery_voltage_soc_x100 > (DEFAULT_BATTERY_CELLS_NUMBER * DISPLAY_VLCD5_LI_ION_CELL_VOLTS_X100_0)) { ui8_battery_state_of_charge = 1; }      // blink | empty
+  #else
+    if      (ui16_battery_voltage_soc_x100 > (DEFAULT_BATTERY_CELLS_NUMBER * DISPLAY_VLCD6_LI_ION_CELL_VOLTS_X100_4)) { ui8_battery_state_of_charge = 5; }      // 4 bars | full
+    else if (ui16_battery_voltage_soc_x100 > (DEFAULT_BATTERY_CELLS_NUMBER * DISPLAY_VLCD6_LI_ION_CELL_VOLTS_X100_3)) { ui8_battery_state_of_charge = 4; }      // 3 bars
+    else if (ui16_battery_voltage_soc_x100 > (DEFAULT_BATTERY_CELLS_NUMBER * DISPLAY_VLCD6_LI_ION_CELL_VOLTS_X100_2)) { ui8_battery_state_of_charge = 3; }      // 2 bars
+    else if (ui16_battery_voltage_soc_x100 > (DEFAULT_BATTERY_CELLS_NUMBER * DISPLAY_VLCD6_LI_ION_CELL_VOLTS_X100_1)) { ui8_battery_state_of_charge = 2; }      // 1 bar
+    else if (ui16_battery_voltage_soc_x100 > (DEFAULT_BATTERY_CELLS_NUMBER * DISPLAY_VLCD6_LI_ION_CELL_VOLTS_X100_0)) { ui8_battery_state_of_charge = 1; }      // blink | empty
+  #endif
+  }
+}
+
+static void communications_controller(void)
+{
+#ifndef DEBUG_UART
+  if (ui8_received_package_flag)
+  {
+    // verify crc of the package
+    ui16_crc_rx = 0;
+    for (ui8_i = 0; ui8_i <= 5; ui8_i++)
+    {
+      ui16_crc_rx += ui8_rx_buffer[ui8_i];
+    }
+
+    // see if CRC is ok...
+    if (ui8_rx_buffer[6] == ui16_crc_rx)
+    {
+    #if DISPLAY_VLCD_ASSIST_LEVEL_ENABLED
+      switch (ui8_rx_buffer[1] & 0x5E)
+      {
+        case DISPLAY_VLCD_ASSIST_LEVEL_0:
+
+          ui8_assist_level = 0;
+
+          break;
+
+        case DISPLAY_VLCD_ASSIST_LEVEL_1:
+
+          ui8_assist_level = 1;
+
+          break;
+
+        case DISPLAY_VLCD_ASSIST_LEVEL_2:
+
+          ui8_assist_level = 2;
+
+          break;
+
+        case DISPLAY_VLCD_ASSIST_LEVEL_3:
+
+          ui8_assist_level = 3;
+
+          break;
+
+        case DISPLAY_VLCD_ASSIST_LEVEL_4:
+
+          ui8_assist_level = 4;
+
+          break;
+      }
+    #endif
+
+      // walk assist / cruise function 
+      configuration_variables.ui8_walk_assist = DISPLAY_VLCD_WALK_ASSIST_ENABLED ? ((ui8_rx_buffer[1] & (1 << 5)) ? 1 : 0) : 0;
+
+      // enable walk assist or cruise function depending on speed
+      if (configuration_variables.ui8_walk_assist)
+        configuration_variables.ui8_walk_assist = (ui16_wheel_speed_x10 < 80) ? DEFAULT_WALK_ASSIST_FUNCTION_ENABLED : DEFAULT_CRUISE_FUNCTION_ENABLED;
+
+      // assist level
+      configuration_variables.ui8_assist_level_factor_x10 = configuration_variables.ui8_walk_assist ? ui8_walk_assist_levels_factor[ui8_assist_level] : ui8_assist_levels_factor_x10[ui8_assist_level];
+
+      // startup motor power boost
+      configuration_variables.ui8_startup_motor_power_boost_assist_level = ui8_startup_motor_power_boost_assist_levels[ui8_assist_level];
+
+      // wheel perimeter
+      configuration_variables.ui16_wheel_perimeter = DISPLAY_VLCD_WHEEL_PERIMETER_ENABLED ? ((uint16_t) ui8_rx_buffer[3] * 80) : DEFAULT_WHEEL_PERIMETER;
+
+      // wheel max speed
+      configuration_variables.ui8_wheel_max_speed = DISPLAY_VLCD_WHEEL_MAX_SPEED_ENABLED ? ui8_rx_buffer[5] : DEFAULT_WHEEL_MAX_SPEED;
+
+    #if !DISPLAY_VLCD_CONTROL_FUNCTIONS
+      // lights state
+      configuration_variables.ui8_lights = DISPLAY_VLCD_LIGHTS_ENABLED ? (ui8_rx_buffer[1] & 1) : DEFAULT_LIGHTS_STATE;
+
+      // set lights
+      lights_set_state(configuration_variables.ui8_lights);
+    #else
+      if ((ui8_rx_buffer[1] & 1) != ui8_lights_flag)
+      {
+        ui8_lights_flag = (ui8_rx_buffer[1] & 1);
+
+        if ((ui8_data_page == 1) && (ui8_assist_level > 0) && (ui8_assist_level < 4))
+        {
+          ui8_data_index = ui8_lights_flag ? ui8_assist_level : 0;
+        }
+        else
+        {
+          switch (ui8_assist_level)
+          {
+            case 0:
+
+              // lights state
+              configuration_variables.ui8_lights = DISPLAY_VLCD_LIGHTS_ENABLED ? (ui8_rx_buffer[1] & 1) : DEFAULT_LIGHTS_STATE;
+
+              // set lights
+              lights_set_state(configuration_variables.ui8_lights);
+
+              break;
+
+            case 1:
+
+              // offroad mode
+              configuration_variables.ui8_offroad_mode = ui8_lights_flag;
+
+              break;
+
+            case 2:
+
+              // startup motor power boost enabled
+              configuration_variables.ui8_startup_motor_power_boost_feature_enabled = ui8_lights_flag;
+
+              break;
+
+            case 3:
+
+              // target battery max power
+              configuration_variables.ui8_target_battery_max_power_div25 = ui8_lights_flag ? ((uint8_t) ((uint16_t) DEFAULT_TARGET_BATTERY_MAX_POWER / 25)) : 0;
+
+              break;
+
+            case 4:
+
+              ui8_data_page = ui8_lights_flag;
+
+              break;
+          }
+        }
+      }
+
+      switch (ui8_data_index)
+      {
+        case 1:
+
+          // power on pedals / 10
+          ui8_fault_code = (uint8_t) (ui16_pedal_power_x10 / 100);
+
+          break;
+
+        case 2:
+
+          // adc 10 bits battery voltage
+          ui8_fault_code = (uint8_t) (((uint32_t) motor_get_adc_battery_voltage_filtered_10b() * ADC_BATTERY_VOLTAGE_PER_ADC_STEP_X10000) / 10000);
+
+          break;
+
+        case 3:
+
+          // battery current
+          ui8_fault_code = (uint8_t) (((float) motor_get_adc_battery_current_filtered_10b() * 0.826) / 5);
+
+          break;
+
+        default:
+
+          ui8_fault_code = DISPLAY_VLCD_FAULT_CODE_NO_FAULT;
+
+          break;
+      }
+    #endif
+
+      // verify if any configuration_variables did change and if so, save all of them in the EEPROM
+      eeprom_write_if_values_changed();
+
+      // signal that we processed the full package
+      ui8_received_package_flag = 0;
+
+      ui8_uart_received_first_package = 1;
+    }
+
+    // enable UART2 receive interrupt as we are now ready to receive a new package
+    UART2->CR2 |= (1 << 5);
+  }
+
+  uart_send_package();
+#endif
+}
+
+static void uart_send_package(void)
+{
+  uint16_t ui16_temp;
+
+  // send the data to the LCD
+  // start up byte
+  ui8_tx_buffer[0] = 0x43;
+
+  // battery state of charge
+  calc_battery_soc();
+
+  ui8_tx_buffer[1] = ui8_battery_state_of_charge_levels[ui8_battery_state_of_charge];
+
+  // working status
+  ui8_tx_buffer[2] = 0x00;
+
+  if (ui8_battery_state_of_charge == 0)
+    ui8_tx_buffer[2] |= 0x01;
+
+  if (ui16_wheel_speed_x10 != 0)
+    ui8_tx_buffer[2] |= DISPLAY_VLCD_WHEEL_TURNING_FLAG_ENABLED ? 0x80 : 0x00;
+
+  if (ui16_motor_get_motor_speed_erps() != 0)
+    ui8_tx_buffer[2] |= DISPLAY_VLCD_MOTOR_WORKING_FLAG_ENABLED ? 0x40 : 0x00;
+
+  ui8_tx_buffer[2] |= DISPLAY_VLCD_ALWAYS_ON ? 0x04 : (((ui16_wheel_speed_x10 != 0) || (ui16_motor_get_motor_speed_erps() != 0)) ? 0x04 : 0x00);
+
+  // ADC torque sensor
+  ui8_tx_buffer[3] = ui8_adc_torque_sensor_min_value;
+  ui8_tx_buffer[4] = UI8_ADC_TORQUE_SENSOR;
+
+  // fault code
+  ui8_tx_buffer[5] = DISPLAY_VLCD_CONTROL_FUNCTIONS ? ui8_fault_code : DISPLAY_VLCD_FAULT_CODE_NO_FAULT;
+
+#if DISPLAY_VLCD_FAULT_CODE_ENABLED
+  if (ui8_battery_state_of_charge == 9)
+    ui8_tx_buffer[5] = DISPLAY_VLCD_FAULT_CODE_OVERVOLTAGE;
+  else if (configuration_variables.ui8_error_states & ERROR_STATE_EBIKE_WHEEL_BLOCKED)
+    ui8_tx_buffer[5] = DISPLAY_VLCD_FAULT_CODE_EBIKE_WHEEL_BLOCKED;
+  else if (configuration_variables.ui8_temperature_current_limiting_value < 255)
+    ui8_tx_buffer[5] = DISPLAY_VLCD_FAULT_CODE_TEMPERATURE_PROTECTION;
+#endif
+
+  if (ui8_startup_counter < 40)
+    ++ui8_startup_counter;
+
+  // wheel speed
+  if ((ui16_wheel_speed_x10 == 0) || (ui8_startup_counter < 40))
+  {
+    ui8_tx_buffer[6] = 0x07;
+    ui8_tx_buffer[7] = 0x07;
+  }
+  else
+  {
+    ui16_temp = (uint16_t) (1000.0 / ((float) PWM_CYCLES_SECOND / (float) ui16_wheel_speed_sensor_pwm_cycles_ticks) / DISPLAY_VLCD_WHEEL_SPEED_ROTATION_UNIT_TIME);
+
+    ui8_tx_buffer[6] = (uint8_t) (ui16_temp & 0xff);
+    ui8_tx_buffer[7] = (uint8_t) (ui16_temp >> 8);
+  }
+
+  // prepare crc of the package
+  ui16_crc_tx = 0;
+  for (ui8_i = 0; ui8_i <= 7; ui8_i++)
+  {
+    ui16_crc_tx += ui8_tx_buffer[ui8_i];
+  }
+  ui8_tx_buffer[8] = ui16_crc_tx;
+
+  // send the full package to UART
+  for (ui8_i = 0; ui8_i <= 8; ui8_i++)
+  {
+    putchar(ui8_tx_buffer[ui8_i]);
+  }
+}
+#else
 
 static void communications_controller (void)
 {
@@ -704,6 +1202,7 @@ static void uart_send_package (void)
   }
 }
 
+#endif
 
 // each 1 unit = 0.625 amps
 static void ebike_app_set_target_adc_battery_max_current (uint8_t ui8_value)
@@ -1177,7 +1676,11 @@ void UART2_IRQHandler(void) __interrupt(UART2_IRQHANDLER)
       ui8_rx_counter++;
 
       // see if is the last byte of the package
+    #if DISPLAY_VLCD5_ENABLED || DISPLAY_VLCD6_ENABLED
+      if (ui8_rx_counter >= 7)
+    #else
       if (ui8_rx_counter > 12)
+    #endif
       {
         ui8_rx_counter = 0;
         ui8_state_machine = 0;
